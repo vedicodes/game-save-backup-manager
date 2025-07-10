@@ -94,7 +94,6 @@ func main() {
 	}
 }
 
-
 func loadConfig() (Config, string, error) {
 	exePath, err := os.Executable()
 	if err != nil {
@@ -211,6 +210,7 @@ func promptForChoice(prompt string, validChoices []string) (string, error) {
 func promptForInput(prompt string) (string, error) {
 	promptUI := promptui.Prompt{
 		Label: white(prompt),
+		HideEntered: true,
 	}
 	result, err := promptUI.Run()
 	if err != nil {
@@ -492,6 +492,7 @@ func deleteBackups(config Config) {
 
 func settingsMenu(config Config, currentConfigPath string) (Config, string) {
 	for {
+		clearScreen()
 		fmt.Println(cyan("====================================="))
 		fmt.Printf("%s %s SETTINGS\n", iconSettings, cyan("SETTINGS"))
 		fmt.Println(cyan("====================================="))
@@ -546,40 +547,40 @@ func settingsMenu(config Config, currentConfigPath string) (Config, string) {
 				}
 			}
 		case "3": // Change Config File Path
-            fmt.Println()
-            fmt.Printf("%s %s Current path: %s\n", iconDir, white("INFO:"), config.ConfigFilePath)
-            newConfigPath, err := promptForInput("Enter new config file path (e.g., C:\\Users\\YourUser\\AppData\\Roaming\\game-save-backup-manager\\config.json)")
-            if err == nil && newConfigPath != "" {
-                // Ensure the directory for the new path exists
-                newConfigDir := filepath.Dir(newConfigPath)
-                if err := os.MkdirAll(newConfigDir, 0755); err != nil {
-                    fmt.Printf("%s %s Failed to create new config directory: %v\n", iconError, red("ERROR:"), err)
-                    waitForEnter()
-                    continue
-                }
+			fmt.Println()
+			fmt.Printf("%s %s Current path: %s\n", iconDir, white("INFO:"), config.ConfigFilePath)
+			newConfigPath, err := promptForInput("Enter new config file path (e.g., C:\\Users\\YourUser\\AppData\\Roaming\\game-save-backup-manager\\config.json)")
+			if err == nil && newConfigPath != "" {
+				// Ensure the directory for the new path exists
+				newConfigDir := filepath.Dir(newConfigPath)
+				if err := os.MkdirAll(newConfigDir, 0755); err != nil {
+					fmt.Printf("%s %s Failed to create new config directory: %v\n", iconError, red("ERROR:"), err)
+					waitForEnter()
+					continue
+				}
 
-                // Update config struct with new path
-                config.ConfigFilePath = newConfigPath
+				// Update config struct with new path
+				config.ConfigFilePath = newConfigPath
 
-                // Save config to the NEW path
-                if err := saveConfig(config, newConfigPath); err != nil {
-                    fmt.Printf("%s %s Failed to save config to new path: %v\n", iconError, red("ERROR:"), err)
-                } else {
-                    fmt.Printf("%s %s Config file path updated successfully!\n", iconSuccess, green("SUCCESS:"))
-                    fmt.Printf("%s %s Please restart the application for changes to take full effect.\n", iconSettings, yellow("INFO:"))
+				// Save config to the NEW path
+				if err := saveConfig(config, newConfigPath); err != nil {
+					fmt.Printf("%s %s Failed to save config to new path: %v\n", iconError, red("ERROR:"), err)
+				} else {
+					fmt.Printf("%s %s Config file path updated successfully!\n", iconSuccess, green("SUCCESS:"))
+					fmt.Printf("%s %s Please restart the application for changes to take full effect.\n", iconSettings, yellow("INFO:"))
 
-                    // Optional: Delete old config file if it's different
-                    if currentConfigPath != newConfigPath {
-                        if err := os.Remove(currentConfigPath); err != nil {
-                            fmt.Printf("%s %s Warning: Failed to delete old config file at %s: %v\n", iconError, yellow("WARNING:"), currentConfigPath, err)
-                        } else {
-                            fmt.Printf("%s %s Old config file deleted from %s.\n", iconSuccess, green("INFO:"), currentConfigPath)
-                        }
-                    }
-                    currentConfigPath = newConfigPath // Update current path for this session
-                }
-            }
-            waitForEnter()
+					// Optional: Delete old config file if it's different
+					if currentConfigPath != newConfigPath {
+						if err := os.Remove(currentConfigPath); err != nil {
+							fmt.Printf("%s %s Warning: Failed to delete old config file at %s: %v\n", iconError, yellow("WARNING:"), currentConfigPath, err)
+						} else {
+							fmt.Printf("%s %s Old config file deleted from %s.\n", iconSuccess, green("INFO:"), currentConfigPath)
+						}
+					}
+					currentConfigPath = newConfigPath // Update current path for this session
+				}
+			}
+			waitForEnter()
 		case "4": // Toggle Auto-Backup on Restore
 			fmt.Println()
 			config.AutoBackup = !config.AutoBackup
@@ -601,12 +602,12 @@ func settingsMenu(config Config, currentConfigPath string) (Config, string) {
 			}
 			waitForEnter()
 		case "6": // Open Backup Directory
-            openExplorer(config.BackupDir)
-            waitForEnter()
-        case "7": // Back to Main Menu
-            return config, currentConfigPath
-        }
-    }
+			openExplorer(config.BackupDir)
+			waitForEnter()
+		case "7": // Back to Main Menu
+			return config, currentConfigPath
+		}
+	}
 }
 
 func openExplorer(path string) {
