@@ -2,7 +2,7 @@
 
 A simple and efficient command-line tool for managing your game save backups.
 
-![Screenshot](https://i.imgur.com/your-screenshot.png) 
+![Screenshot](https://i.postimg.cc/WbGRTZHn/Tool-Screenshot.jpg) 
 
 ## Description
 
