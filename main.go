@@ -13,6 +13,7 @@ import (
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/fatih/color"
+	"github.com/inancgumus/screen"
 	"github.com/manifoldco/promptui"
 )
 
@@ -174,14 +175,8 @@ func displayMenu(config Config) {
 }
 
 func clearScreen() {
-	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.Command("cmd", "/c", "cls")
-	} else {
-		cmd = exec.Command("clear")
-	}
-	cmd.Stdout = os.Stdout
-	cmd.Run()
+	screen.Clear()
+	screen.MoveTopLeft()
 }
 
 func promptForChoice(prompt string, validChoices []string) (string, error) {
