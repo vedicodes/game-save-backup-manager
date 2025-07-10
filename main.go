@@ -155,6 +155,7 @@ func saveConfig(config Config) error {
 }
 
 func displayMenu(config Config) {
+	clearScreen()
 	fmt.Println(cyan("====================================="))
 	fmt.Printf("%s %s\n", iconSettings, cyan("GAME SAVE BACKUP MANAGER"))
 	fmt.Println(cyan("====================================="))
@@ -170,6 +171,17 @@ func displayMenu(config Config) {
 	fmt.Printf("5. %s Settings\n", iconSettings)
 	fmt.Printf("6. %s Exit\n", iconError)
 	fmt.Println()
+}
+
+func clearScreen() {
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.Command("cmd", "/c", "cls")
+	} else {
+		cmd = exec.Command("clear")
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Run()
 }
 
 func promptForChoice(prompt string, validChoices []string) (string, error) {
