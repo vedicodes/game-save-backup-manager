@@ -471,6 +471,8 @@ func restoreBackup(config Config) {
 	prompt := promptui.Select{
 		Label: white("Select a backup to restore (or cancel)"),
 		Items: append(items, "Cancel"),
+		// Keep the list height reasonable – no scroll‑back!
+		Size: 7, // fits nicely on 24‑line consoles; tweak if you like
 	}
 	index, _, err := prompt.Run()
 	if err != nil {
@@ -538,15 +540,32 @@ func listBackups(config Config) {
 	backups, err := listBackupsInternal(config)
 	if err != nil {
 		fmt.Printf("%s %s Failed to list backups: %v\n", iconError, red("ERROR:"), err)
-	} else if len(backups) == 0 {
+		waitForEnter()
+		return
+	}
+	if len(backups) == 0 {
 		fmt.Printf("%s %s No backups found.\n", iconError, red("INFO:"))
-	} else {
-		for i, backup := range backups {
-			fmt.Printf("%d. %s %s (Created: %s)\n", i+1, iconDir, white(backup.Name), backup.CreatedAt.Format("01/02/2006 03:04:05 PM"))
-		}
+		waitForEnter()
+		return
 	}
 
-	waitForEnter()
+	// Build display strings once.
+	items := make([]string, len(backups))
+	for i, b := range backups {
+		items[i] = fmt.Sprintf("%s (Created: %s)",
+			b.Name, b.CreatedAt.Format("01/02/2006 03:04:05 PM"))
+	}
+
+	sel := promptui.Select{
+		Label: white("Backups(Enter to leave)"),
+		Items: items,
+		// Keep the list height reasonable – no scroll‑back!
+		Size:         7, // fits nicely on 24‑line consoles; tweak if you like
+		HideSelected: true,
+	}
+
+	// We don’t actually *use* the selection; we only want the paginated view.
+	_, _, _ = sel.Run()
 }
 
 func listBackupsInternal(config Config) ([]Backup, error) {
