@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -19,10 +20,9 @@ import (
 
 // Config holds the CLI settings
 type Config struct {
-	SavePath       string `json:"save_path"`
-	BackupDir      string `json:"backup_dir"`
-	AutoBackup     bool   `json:"auto_backup"`
-	ConfigFilePath string `json:"config_file_path"` // New field
+	SavePath   string `json:"save_path"`
+	BackupDir  string `json:"backup_dir"`
+	AutoBackup bool   `json:"auto_backup"`
 }
 
 // Backup represents a backup file
@@ -49,13 +49,17 @@ const (
 	iconRestore  = "🔄"
 	iconDelete   = "🗑️"
 	iconSettings = "⚙️"
+	iconInfo     = "ℹ️"
+	iconExit     = "🚪"
 )
 
 func main() {
-	config, currentConfigPath, err := loadConfig()
+	config, configPath, err := loadConfig()
 	if err != nil {
-		fmt.Printf("%s %s Error loading config: %v\n", iconError, red("ERROR:"), err)
-		fmt.Println("Press Enter to exit...")
+		fmt.Printf("%s %s Configuration error: %v\n", iconError, red("ERROR:"), err)
+		fmt.Println("\nThis usually means there's an issue with your configuration file.")
+		fmt.Println("You may need to delete the config.json file and restart the application.")
+		fmt.Println("\nPress Enter to exit...")
 		fmt.Scanln()
 		return
 	}
@@ -63,14 +67,14 @@ func main() {
 	for {
 		displayMenu(config)
 		choice, err := promptForChoice("Select an option (1-6)", []string{"1", "2", "3", "4", "5", "6"})
-		clearScreen() // Clear the promptui output
+		clearScreen()
 		if err != nil {
 			if err == promptui.ErrInterrupt {
-				fmt.Printf("%s %s Exiting...\n", iconError, yellow("INFO:"))
+				fmt.Printf("%s %s Exiting...\n", iconExit, yellow("INFO:"))
 				return
 			}
 			fmt.Printf("%s %s Invalid input: %v\n", iconError, red("ERROR:"), err)
-			waitForEnter() // Add waitForEnter for error messages
+			waitForEnter()
 			continue
 		}
 
@@ -84,7 +88,7 @@ func main() {
 		case "4":
 			deleteBackups(config)
 		case "5":
-			config, currentConfigPath = settingsMenu(config, currentConfigPath)
+			config, configPath = settingsMenu(config, configPath)
 		case "6":
 			fmt.Printf("%s %s Thank you for using Game Save Backup Manager!\n", iconSuccess, green("INFO:"))
 			fmt.Println("Press Enter to exit...")
@@ -100,63 +104,227 @@ func loadConfig() (Config, string, error) {
 		return Config{}, "", fmt.Errorf("failed to get executable path: %w", err)
 	}
 	exeDir := filepath.Dir(exePath)
-	defaultConfigPath := filepath.Join(exeDir, "config.json")
+	configPath := filepath.Join(exeDir, "config.json")
+
+	// Try to load existing config
+	if data, err := os.ReadFile(configPath); err == nil {
+		var config Config
+		if err := json.Unmarshal(data, &config); err != nil {
+			return Config{}, "", fmt.Errorf("configuration file is corrupted - please delete config.json and restart")
+		}
+		// Ensure backup directory exists
+		if err := os.MkdirAll(config.BackupDir, 0755); err != nil {
+			return Config{}, "", fmt.Errorf("cannot access backup directory: %s", config.BackupDir)
+		}
+		return config, configPath, nil
+	}
+
+	// First run setup
+	config, err := runFirstTimeSetup()
+	if err != nil {
+		return Config{}, "", fmt.Errorf("setup cancelled or failed: %w", err)
+	}
+
+	// Save the new config
+	if err := saveConfig(config, configPath); err != nil {
+		return Config{}, "", fmt.Errorf("failed to save configuration: %w", err)
+	}
+
+	return config, configPath, nil
+}
+
+func runFirstTimeSetup() (Config, error) {
+	clearScreen()
+	fmt.Println(cyan("====================================="))
+	fmt.Printf("%s %s FIRST TIME SETUP\n", iconSettings, cyan("FIRST TIME SETUP"))
+	fmt.Println(cyan("====================================="))
+	fmt.Println()
+	fmt.Printf("%s %s Welcome to Game Save Backup Manager!\n", iconSuccess, green("WELCOME:"))
+	fmt.Printf("%s %s Let's set up your save file and backup locations.\n", iconInfo, white("INFO:"))
+	fmt.Println()
+
+	// Show common save file locations
+	fmt.Printf("%s %s Common save file locations:\n", iconInfo, cyan("EXAMPLES:"))
+	switch runtime.GOOS {
+	case "windows":
+		fmt.Println("  • C:\\Users\\YourName\\Documents\\My Games\\GameName\\save.dat")
+		fmt.Println("  • C:\\Users\\YourName\\AppData\\Local\\GameName\\save.sav")
+		fmt.Println("  • C:\\Users\\YourName\\Saved Games\\GameName\\save.dat")
+	case "darwin":
+		fmt.Println("  • ~/Library/Application Support/GameName/save.dat")
+		fmt.Println("  • ~/Documents/GameName/save.sav")
+	default:
+		fmt.Println("  • ~/.local/share/GameName/save.dat")
+		fmt.Println("  • ~/.config/GameName/save.sav")
+	}
+	fmt.Println()
 
 	var config Config
-	actualConfigPath := defaultConfigPath // Assume default initially
+	var err error
 
-	// Try to load from default path first
-	data, err := os.ReadFile(defaultConfigPath)
-	if err == nil {
-		// Successfully read from default path
-		if err := json.Unmarshal(data, &config); err != nil {
-			return Config{}, "", fmt.Errorf("failed to unmarshal config data from default path: %w", err)
+	// Get save file path with improved validation
+	config.SavePath, err = getSaveFilePath()
+	if err != nil {
+		return Config{}, err
+	}
+
+	// Get backup directory with validation
+	config.BackupDir, err = getBackupDirectory()
+	if err != nil {
+		return Config{}, err
+	}
+
+	// Set default auto-backup to true
+	config.AutoBackup = true
+
+	fmt.Printf("\n%s %s Configuration completed successfully!\n", iconSuccess, green("SUCCESS:"))
+	fmt.Printf("%s %s Save file: %s\n", iconInfo, white("INFO:"), config.SavePath)
+	fmt.Printf("%s %s Backup directory: %s\n", iconInfo, white("INFO:"), config.BackupDir)
+	fmt.Printf("%s %s Auto-backup on restore: %v\n", iconInfo, white("INFO:"), config.AutoBackup)
+	fmt.Println()
+	fmt.Printf("%s %s You can now create your first backup from the main menu!\n", iconSuccess, green("NEXT:"))
+	waitForEnter()
+
+	return config, nil
+}
+
+func getSaveFilePath() (string, error) {
+	for {
+		fmt.Printf("%s %s SAVE FILE SETUP\n", iconSettings, cyan("STEP 1:"))
+		fmt.Println("Enter the full path to your game save file.")
+		fmt.Printf("Type '%s' to exit setup.\n", yellow("exit"))
+		fmt.Println()
+
+		savePath, err := promptForInput("Save file path")
+		if err != nil {
+			if err == promptui.ErrInterrupt {
+				return "", fmt.Errorf("setup cancelled by user")
+			}
+			continue
 		}
-		// If a custom path is specified in the loaded config, try to load from there
-		if config.ConfigFilePath != "" && config.ConfigFilePath != defaultConfigPath {
-			fmt.Printf("%s %s Custom config path found: %s. Attempting to load from there.\n", iconSettings, yellow("INFO:"), config.ConfigFilePath)
-			customData, customErr := os.ReadFile(config.ConfigFilePath)
-			if customErr == nil {
-				if err := json.Unmarshal(customData, &config); err != nil {
-					fmt.Printf("%s %s Failed to unmarshal config data from custom path, falling back to default: %v\n", iconError, red("ERROR:"), err)
-					// Stick with the config loaded from default path
-				} else {
-					actualConfigPath = config.ConfigFilePath // Successfully loaded from custom path
-				}
-			} else {
-				fmt.Printf("%s %s Failed to read config from custom path, falling back to default: %v\n", iconError, red("ERROR:"), customErr)
-				// Stick with the config loaded from default path
+
+		if strings.ToLower(strings.TrimSpace(savePath)) == "exit" {
+			return "", fmt.Errorf("setup cancelled by user")
+		}
+
+		savePath = strings.TrimSpace(savePath)
+		if savePath == "" {
+			fmt.Printf("%s %s Path cannot be empty.\n", iconError, red("ERROR:"))
+			fmt.Println()
+			continue
+		}
+
+		// Validate path format
+		if !filepath.IsAbs(savePath) {
+			fmt.Printf("%s %s Please provide an absolute path (full path starting from root).\n", iconError, red("ERROR:"))
+			fmt.Println()
+			continue
+		}
+
+		// Check if file exists
+		if _, err := os.Stat(savePath); os.IsNotExist(err) {
+			fmt.Printf("%s %s File not found: %s\n", iconError, red("ERROR:"), savePath)
+			fmt.Printf("%s %s Please check the path and make sure the file exists.\n", iconError, red("TIP:"))
+			fmt.Println()
+			continue
+		}
+
+		// Check if it's actually a file (not a directory)
+		if info, err := os.Stat(savePath); err == nil && info.IsDir() {
+			fmt.Printf("%s %s Path points to a directory, not a file: %s\n", iconError, red("ERROR:"), savePath)
+			fmt.Println()
+			continue
+		}
+
+		// Check read permissions
+		if file, err := os.Open(savePath); err != nil {
+			fmt.Printf("%s %s Cannot read file (permission denied): %s\n", iconError, red("ERROR:"), savePath)
+			fmt.Println()
+			continue
+		} else {
+			file.Close()
+		}
+
+		fmt.Printf("%s %s Save file validated successfully!\n", iconSuccess, green("SUCCESS:"))
+		fmt.Println()
+		return savePath, nil
+	}
+}
+
+func getBackupDirectory() (string, error) {
+	for {
+		fmt.Printf("%s %s BACKUP DIRECTORY SETUP\n", iconSettings, cyan("STEP 2:"))
+		fmt.Println("Enter the directory where you want to store your backups.")
+		fmt.Printf("Type '%s' to exit setup.\n", yellow("exit"))
+		fmt.Println()
+
+		backupDir, err := promptForInput("Backup directory path")
+		if err != nil {
+			if err == promptui.ErrInterrupt {
+				return "", fmt.Errorf("setup cancelled by user")
+			}
+			continue
+		}
+
+		if strings.ToLower(strings.TrimSpace(backupDir)) == "exit" {
+			return "", fmt.Errorf("setup cancelled by user")
+		}
+
+		backupDir = strings.TrimSpace(backupDir)
+		if backupDir == "" {
+			fmt.Printf("%s %s Path cannot be empty.\n", iconError, red("ERROR:"))
+			fmt.Println()
+			continue
+		}
+
+		// Validate path format
+		if !filepath.IsAbs(backupDir) {
+			fmt.Printf("%s %s Please provide an absolute path (full path starting from root).\n", iconError, red("ERROR:"))
+			fmt.Println()
+			continue
+		}
+
+		// Check if directory exists, if not, try to create it
+		if _, err := os.Stat(backupDir); os.IsNotExist(err) {
+			fmt.Printf("%s %s Directory doesn't exist. Creating it...\n", iconInfo, yellow("INFO:"))
+			if err := os.MkdirAll(backupDir, 0755); err != nil {
+				fmt.Printf("%s %s Failed to create directory: %v\n", iconError, red("ERROR:"), err)
+				fmt.Printf("%s %s Please check permissions and try a different path.\n", iconError, red("TIP:"))
+				fmt.Println()
+				continue
 			}
 		}
-	} else if os.IsNotExist(err) {
-		// Config file does not exist at default path, create a new default config
-		userProfile := os.Getenv("USERPROFILE")
-		if userProfile == "" {
-			userProfile, _ = os.UserHomeDir()
-		}
-		config = Config{
-			SavePath:       filepath.Join(userProfile, "Saved Games", "Game", "Steam ID", "game.sav"),
-			BackupDir:      filepath.Join(userProfile, "Saved Games", "Game", "Steam ID", "backups"),
-			AutoBackup:     true,
-			ConfigFilePath: defaultConfigPath, // Set default config file path
-		}
-		// Save the newly created default config
-		if err := saveConfig(config, defaultConfigPath); err != nil {
-			return Config{}, "", fmt.Errorf("failed to write default config: %w", err)
-		}
-	} else {
-		// Other error reading default config file
-		return Config{}, "", fmt.Errorf("failed to read config file from default path: %w", err)
-	}
 
-	// Ensure backup directory exists
-	if _, err := os.Stat(config.BackupDir); os.IsNotExist(err) {
-		if err := os.MkdirAll(config.BackupDir, 0755); err != nil {
-			return Config{}, "", fmt.Errorf("failed to create backup directory: %w", err)
+		// Check if it's actually a directory
+		if info, err := os.Stat(backupDir); err == nil && !info.IsDir() {
+			fmt.Printf("%s %s Path points to a file, not a directory: %s\n", iconError, red("ERROR:"), backupDir)
+			fmt.Println()
+			continue
 		}
-	}
 
-	return config, actualConfigPath, nil
+		// Check write permissions by trying to create a test file
+		testFile := filepath.Join(backupDir, ".test_write_permissions")
+		if file, err := os.Create(testFile); err != nil {
+			fmt.Printf("%s %s Cannot write to directory (permission denied): %s\n", iconError, red("ERROR:"), backupDir)
+			fmt.Printf("%s %s Please choose a directory you have write access to.\n", iconError, red("TIP:"))
+			fmt.Println()
+			continue
+		} else {
+			file.Close()
+			os.Remove(testFile) // Clean up test file
+		}
+
+		// Check if directory already contains files and warn user
+		if files, err := os.ReadDir(backupDir); err == nil && len(files) > 0 {
+			fmt.Printf("%s %s Directory already contains %d file(s).\n", iconInfo, yellow("WARNING:"), len(files))
+			fmt.Printf("%s %s This is okay, but make sure it's not used by other applications.\n", iconInfo, yellow("INFO:"))
+			fmt.Println()
+		}
+
+		fmt.Printf("%s %s Backup directory validated successfully!\n", iconSuccess, green("SUCCESS:"))
+		fmt.Println()
+		return backupDir, nil
+	}
 }
 
 func saveConfig(config Config, configPath string) error {
@@ -170,20 +338,19 @@ func saveConfig(config Config, configPath string) error {
 func displayMenu(config Config) {
 	clearScreen()
 	fmt.Println(cyan("====================================="))
-	fmt.Printf("%s %s\r\n", iconSettings, cyan("GAME SAVE BACKUP MANAGER"))
+	fmt.Printf("%s %s\n", iconSettings, cyan("GAME SAVE BACKUP MANAGER"))
 	fmt.Println(cyan("====================================="))
 	fmt.Println()
-	fmt.Printf("%s %s Current Save File: %s\r\n", iconDir, white("INFO:"), config.SavePath)
-	fmt.Printf("%s %s Current Backup Directory: %s\r\n", iconDir, white("INFO:"), config.BackupDir)
-	fmt.Printf("%s %s Current Config File: %s\r\n", iconDir, white("INFO:"), config.ConfigFilePath)
-	fmt.Printf("%s %s Auto-Backup on Restore: %v\r\n", iconSettings, white("INFO:"), config.AutoBackup)
+	fmt.Printf("%s %s Current Save File: %s\n", iconDir, white("INFO:"), config.SavePath)
+	fmt.Printf("%s %s Current Backup Directory: %s\n", iconDir, white("INFO:"), config.BackupDir)
+	fmt.Printf("%s %s Auto-Backup on Restore: %v\n", iconSettings, white("INFO:"), config.AutoBackup)
 	fmt.Println()
-	fmt.Printf("1. %s Create Backup\r\n", iconSuccess)
-	fmt.Printf("2. %s Restore Backup\r\n", iconRestore)
-	fmt.Printf("3. %s List Backups\r\n", iconDir)
-	fmt.Printf("4. %s Delete Backup\r\n", iconDelete)
-	fmt.Printf("5. %s Settings\r\n", iconSettings)
-	fmt.Printf("6. %s Exit\r\n", iconError)
+	fmt.Printf("1. %s Create Backup\n", iconSuccess)
+	fmt.Printf("2. %s Restore Backup\n", iconRestore)
+	fmt.Printf("3. %s List Backups\n", iconDir)
+	fmt.Printf("4. %s Delete Backup\n", iconDelete)
+	fmt.Printf("5. %s Settings\n", iconSettings)
+	fmt.Printf("6. %s Exit\n", iconExit)
 	fmt.Println()
 }
 
@@ -196,10 +363,8 @@ func promptForChoice(prompt string, validChoices []string) (string, error) {
 	promptUI := promptui.Prompt{
 		Label: white(prompt),
 		Validate: func(input string) error {
-			for _, choice := range validChoices {
-				if input == choice {
-					return nil
-				}
+			if slices.Contains(validChoices, input) {
+				return nil
 			}
 			return fmt.Errorf("please enter a number between 1 and %d", len(validChoices))
 		},
@@ -209,7 +374,7 @@ func promptForChoice(prompt string, validChoices []string) (string, error) {
 
 func promptForInput(prompt string) (string, error) {
 	promptUI := promptui.Prompt{
-		Label: white(prompt),
+		Label:       white(prompt),
 		HideEntered: true,
 	}
 	result, err := promptUI.Run()
@@ -499,19 +664,17 @@ func settingsMenu(config Config, currentConfigPath string) (Config, string) {
 		fmt.Println()
 		fmt.Printf("%s %s Current Save File Path: %s\n", iconDir, white("INFO:"), config.SavePath)
 		fmt.Printf("%s %s Current Backup Directory: %s\n", iconDir, white("INFO:"), config.BackupDir)
-		fmt.Printf("%s %s Current Config File: %s\n", iconDir, white("INFO:"), config.ConfigFilePath)
 		fmt.Printf("%s %s Auto-Backup on Restore: %v\n", iconSettings, white("INFO:"), config.AutoBackup)
 		fmt.Println()
 		fmt.Printf("1. %s Change Save File Path\n", iconSettings)
 		fmt.Printf("2. %s Change Backup Directory\n", iconSettings)
-		fmt.Printf("3. %s Change Config File Path\n", iconSettings)
-		fmt.Printf("4. %s Toggle Auto-Backup on Restore\n", iconSettings)
-		fmt.Printf("5. %s Test Save File Path\n", iconSettings)
-		fmt.Printf("6. %s Open Backup Directory\n", iconDir)
-		fmt.Printf("7. %s Back to Main Menu\n", iconSuccess)
+		fmt.Printf("3. %s Toggle Auto-Backup on Restore\n", iconSettings)
+		fmt.Printf("4. %s Test Save File Path\n", iconSettings)
+		fmt.Printf("5. %s Open Backup Directory\n", iconDir)
+		fmt.Printf("6. %s Back to Main Menu\n", iconSuccess)
 		fmt.Println()
 
-		choice, err := promptForChoice("Select an option (1-7)", []string{"1", "2", "3", "4", "5", "6", "7"})
+		choice, err := promptForChoice("Select an option (1-6)", []string{"1", "2", "3", "4", "5", "6"})
 		clearScreen() // Clear the promptui output
 		if err != nil {
 			if err == promptui.ErrInterrupt {
@@ -546,42 +709,7 @@ func settingsMenu(config Config, currentConfigPath string) (Config, string) {
 					fmt.Printf("%s %s Failed to save config: %v\n", iconError, red("ERROR:"), err)
 				}
 			}
-		case "3": // Change Config File Path
-			fmt.Println()
-			fmt.Printf("%s %s Current path: %s\n", iconDir, white("INFO:"), config.ConfigFilePath)
-			newConfigPath, err := promptForInput("Enter new config file path (e.g., C:\\Users\\YourUser\\AppData\\Roaming\\game-save-backup-manager\\config.json)")
-			if err == nil && newConfigPath != "" {
-				// Ensure the directory for the new path exists
-				newConfigDir := filepath.Dir(newConfigPath)
-				if err := os.MkdirAll(newConfigDir, 0755); err != nil {
-					fmt.Printf("%s %s Failed to create new config directory: %v\n", iconError, red("ERROR:"), err)
-					waitForEnter()
-					continue
-				}
-
-				// Update config struct with new path
-				config.ConfigFilePath = newConfigPath
-
-				// Save config to the NEW path
-				if err := saveConfig(config, newConfigPath); err != nil {
-					fmt.Printf("%s %s Failed to save config to new path: %v\n", iconError, red("ERROR:"), err)
-				} else {
-					fmt.Printf("%s %s Config file path updated successfully!\n", iconSuccess, green("SUCCESS:"))
-					fmt.Printf("%s %s Please restart the application for changes to take full effect.\n", iconSettings, yellow("INFO:"))
-
-					// Optional: Delete old config file if it's different
-					if currentConfigPath != newConfigPath {
-						if err := os.Remove(currentConfigPath); err != nil {
-							fmt.Printf("%s %s Warning: Failed to delete old config file at %s: %v\n", iconError, yellow("WARNING:"), currentConfigPath, err)
-						} else {
-							fmt.Printf("%s %s Old config file deleted from %s.\n", iconSuccess, green("INFO:"), currentConfigPath)
-						}
-					}
-					currentConfigPath = newConfigPath // Update current path for this session
-				}
-			}
-			waitForEnter()
-		case "4": // Toggle Auto-Backup on Restore
+		case "3": // Toggle Auto-Backup on Restore
 			fmt.Println()
 			config.AutoBackup = !config.AutoBackup
 			status := "DISABLED"
@@ -593,7 +721,7 @@ func settingsMenu(config Config, currentConfigPath string) (Config, string) {
 				fmt.Printf("%s %s Failed to save config: %v\n", iconError, red("ERROR:"), err)
 			}
 			waitForEnter()
-		case "5": // Test Save File Path
+		case "4": // Test Save File Path
 			fmt.Println()
 			if _, err := os.Stat(config.SavePath); os.IsNotExist(err) {
 				fmt.Printf("%s %s Save file not found at: %s\n", iconError, red("ERROR:"), config.SavePath)
@@ -601,10 +729,10 @@ func settingsMenu(config Config, currentConfigPath string) (Config, string) {
 				fmt.Printf("%s %s Save file found at: %s\n", iconSuccess, green("SUCCESS:"), config.SavePath)
 			}
 			waitForEnter()
-		case "6": // Open Backup Directory
+		case "5": // Open Backup Directory
 			openExplorer(config.BackupDir)
 			waitForEnter()
-		case "7": // Back to Main Menu
+		case "6": // Back to Main Menu
 			return config, currentConfigPath
 		}
 	}
