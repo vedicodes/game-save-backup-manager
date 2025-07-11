@@ -557,7 +557,7 @@ func listBackups(config Config) {
 	}
 
 	sel := promptui.Select{
-		Label: white("Backups(Enter to leave)"),
+		Label: white("Backups(↲ to leave)"),
 		Items: items,
 		// Keep the list height reasonable – no scroll‑back!
 		Size:         7, // fits nicely on 24‑line consoles; tweak if you like
